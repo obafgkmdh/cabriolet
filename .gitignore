@@ -1,5 +1,5 @@
 /target
-cabriolet_library/some_macros/target
+**/target
 
 
 # Added by cargo

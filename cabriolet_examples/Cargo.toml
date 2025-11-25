@@ -1,0 +1,7 @@
+[package]
+name = "cabriolet_examples"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+some_macros = { path = "../cabriolet_library/some_macros" }

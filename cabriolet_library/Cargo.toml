@@ -1,7 +1,0 @@
-[package]
-name = "proc-macros-test"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-some_macros = { path = "./some_macros" }
