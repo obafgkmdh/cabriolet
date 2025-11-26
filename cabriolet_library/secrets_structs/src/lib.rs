@@ -1,14 +1,28 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
+use std::marker::PhantomData;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+// #[derive(Clone)]
+// pub enum LabelIdem {}
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
+#[derive(Clone)]
+pub enum LabelTimely {}
+
+#[derive(Clone)]
+pub enum LabelNonIdem {}
+
+pub trait Label {}
+
+pub trait AtLeastAsIdemAs<T>: Label {}
+impl<T: Label> AtLeastAsIdemAs<T> for T {} // reflexive property
+
+// impl Label for LabelIdem {}
+impl Label for LabelTimely {}
+impl Label for LabelNonIdem {}
+
+impl AtLeastAsIdemAs<LabelNonIdem> for LabelTimely {}
+// impl AtLeastAsIdemAs<LabelNonIdem> for LabelIdem {}
+// impl AtLeastAsIdemAs<LabelTimely> for LabelIdem {}
+
+pub struct Labeled<T, L> where L: Label {
+    val: T,
+    _pd: PhantomData<L>,
 }
