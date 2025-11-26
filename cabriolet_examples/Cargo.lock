@@ -6,6 +6,7 @@ version = 4
 name = "cabriolet_examples"
 version = "0.1.0"
 dependencies = [
+ "secrets_structs",
  "some_macros",
 ]
 
@@ -26,6 +27,10 @@ checksum = "a338cc41d27e6cc6dce6cefc13a0729dfbb81c262b1f519331575dd80ef3067f"
 dependencies = [
  "proc-macro2",
 ]
+
+[[package]]
+name = "secrets_structs"
+version = "0.1.0"
 
 [[package]]
 name = "some_macros"

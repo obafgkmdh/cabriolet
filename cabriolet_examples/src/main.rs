@@ -1,13 +1,18 @@
 extern crate some_macros;
-use some_macros::{make_answer, wysi};
+use some_macros::{labeled_block};
 
-make_answer!();
-
-#[wysi]
-fn some_func(num: i32) -> i32 {
-    num + 32
-}
+use secrets_structs::{LabelNonIdem, LabelTimely, Labeled};
 
 fn main() {
-    println!("{}", some_func(5));
+    let x = 1;
+
+    let y: Labeled<i32, LabelTimely> = Labeled::new(5);
+
+    let z = labeled_block!(LabelNonIdem {
+        let sigma = x + unwrap_labeled(y);
+
+        wrap_labeled(sigma)
+    });
+
+    println!("result: {:?}", z);
 }
