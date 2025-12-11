@@ -76,11 +76,6 @@ fn expand_expr(input: &Expr, label_type: &Type) -> TokenStream {
             new_binary_expr.into_token_stream().into()
         }
         Expr::Lit(lit_expr) => match &lit_expr.lit {
-            syn::Lit::Int(lit_int) => {
-                let mut new_lit_expr = lit_expr.clone();
-                new_lit_expr.lit = syn::Lit::Int(syn::LitInt::new("727", lit_int.span()));
-                new_lit_expr.into_token_stream().into()
-            }
             _ => lit_expr.into_token_stream().into(),
         },
         _ => input.into_token_stream().into(),
