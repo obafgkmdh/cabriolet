@@ -2,6 +2,9 @@
 
 use std::time::{Duration, Instant};
 
+use async_trait::async_trait;
+use futures::future::BoxFuture;
+
 #[derive(Clone, Debug)]
 pub enum LabelTimely<const TIME: u64> {}
 
@@ -9,14 +12,14 @@ pub enum LabelTimely<const TIME: u64> {}
 pub enum LabelNonIdem {}
 
 pub trait Label {
-    type MetaData<T>;
+    type MetaData<T>: Send;
 }
 
 pub trait AtMostAsIdemAs<T>: Label {}
 //impl<T: Label> AtMostAsIdemAs<T> for T {} // reflexive property
 
 impl<const TIME: u64> Label for LabelTimely<TIME> {
-    type MetaData<T> = (Instant, Box<dyn Fn() -> T>);
+    type MetaData<T> = (Instant, Box<dyn Fn() -> BoxFuture<'static, T> + Send>);
 }
 impl Label for LabelNonIdem {
     type MetaData<T> = ();
@@ -29,24 +32,27 @@ impl<const T1: u64, const T2: u64> AtMostAsIdemAs<LabelTimely<T2>> for LabelTime
 }
 
 // TODO: ideally, this wouldn't be pub
+#[async_trait]
 pub trait Contains<T> {
     type CreationArgs;
 
     fn new(args: Self::CreationArgs) -> Self;
-    unsafe fn unwrap_unchecked(&mut self) -> T;
+
+    async unsafe fn unwrap_unchecked(&mut self) -> T;
 }
 
-//#[derive(Debug)]
+#[derive(Clone)]
 pub struct Labeled<T, L>
 where
-    T: Clone,
+    T: Clone + Send,
     L: Label,
 {
     val: Option<T>,
     metadata: L::MetaData<T>,
 }
 
-impl<T: Clone> Contains<T> for Labeled<T, LabelNonIdem> {
+#[async_trait]
+impl<T: Clone + Send> Contains<T> for Labeled<T, LabelNonIdem> {
     type CreationArgs = T;
 
     fn new(val: Self::CreationArgs) -> Self {
@@ -56,15 +62,16 @@ impl<T: Clone> Contains<T> for Labeled<T, LabelNonIdem> {
         }
     }
 
-    unsafe fn unwrap_unchecked(&mut self) -> T {
+    async unsafe fn unwrap_unchecked(&mut self) -> T {
         self.val
             .clone()
             .expect("NonIdem should always have a value")
     }
 }
 
-impl<T: Clone, const TIME: u64> Contains<T> for Labeled<T, LabelTimely<TIME>> {
-    type CreationArgs = Box<dyn Fn() -> T>;
+#[async_trait]
+impl<T: Clone + Send, const TIME: u64> Contains<T> for Labeled<T, LabelTimely<TIME>> {
+    type CreationArgs = Box<dyn Fn() -> BoxFuture<'static, T> + Send>;
 
     fn new(create_fn: Self::CreationArgs) -> Self {
         Self {
@@ -73,7 +80,7 @@ impl<T: Clone, const TIME: u64> Contains<T> for Labeled<T, LabelTimely<TIME>> {
         }
     }
 
-    unsafe fn unwrap_unchecked(&mut self) -> T {
+    async unsafe fn unwrap_unchecked(&mut self) -> T {
         let now = Instant::now();
         let (expiry, ref create_fn) = self.metadata;
         if now < expiry {
@@ -81,7 +88,7 @@ impl<T: Clone, const TIME: u64> Contains<T> for Labeled<T, LabelTimely<TIME>> {
                 .clone()
                 .expect("Timely value was non-expired, so should always have a value")
         } else {
-            let val = create_fn();
+            let val = create_fn().await;
             self.val = Some(val.clone());
 
             val
@@ -92,7 +99,7 @@ impl<T: Clone, const TIME: u64> Contains<T> for Labeled<T, LabelTimely<TIME>> {
 #[allow(private_bounds)]
 impl<T, L> Labeled<T, L>
 where
-    T: Clone,
+    T: Clone + Send,
     L: Label,
     Labeled<T, L>: Contains<T>,
 {
@@ -100,14 +107,14 @@ where
         <Self as Contains<T>>::new(args)
     }
 
-    pub fn unwrap_checked<Lp>(&mut self) -> T
+    pub async fn unwrap_checked<Lp>(&mut self) -> T
     where
         Lp: AtMostAsIdemAs<L>,
     {
-        unsafe { self.unwrap_unchecked() }
+        unsafe { self.unwrap_unchecked() }.await
     }
 
-    pub fn endorse_idempotent(&mut self) -> T {
-        self.unwrap_checked::<LabelNonIdem>()
+    pub async fn endorse_idempotent(&mut self) -> T {
+        self.unwrap_checked::<LabelNonIdem>().await
     }
 }

@@ -52,7 +52,7 @@ fn expand_expr(input: &Expr, label_type: &Type) -> TokenStream {
             // If it's a call to an unwrap_labeled "function"
             if is_call_to(call_expr, "unwrap_labeled") {
                 quote::quote! {
-                    ::secrets_structs::Labeled::unwrap_checked::<#label_type>(&mut #args)
+                    ::secrets_structs::Labeled::unwrap_checked::<#label_type>(&mut #args).await
                 }
                 .into()
             } else if is_call_to(call_expr, "wrap_labeled") {
