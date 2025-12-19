@@ -1,9 +1,14 @@
 #![feature(generic_const_exprs)]
 
-use std::time::{Duration, Instant};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use async_trait::async_trait;
 use futures::future::BoxFuture;
+
+pub type TimelyClosure<T> = Arc<dyn Fn() -> BoxFuture<'static, T> + Send + Sync>;
 
 #[derive(Clone, Debug)]
 pub enum LabelTimely<const TIME: u64> {}
@@ -12,14 +17,14 @@ pub enum LabelTimely<const TIME: u64> {}
 pub enum LabelNonIdem {}
 
 pub trait Label {
-    type MetaData<T>: Send;
+    type MetaData<T>: Clone + Send;
 }
 
 pub trait AtMostAsIdemAs<T>: Label {}
 //impl<T: Label> AtMostAsIdemAs<T> for T {} // reflexive property
 
 impl<const TIME: u64> Label for LabelTimely<TIME> {
-    type MetaData<T> = (Instant, Box<dyn Fn() -> BoxFuture<'static, T> + Send>);
+    type MetaData<T> = (Instant, TimelyClosure<T>);
 }
 impl Label for LabelNonIdem {
     type MetaData<T> = ();
@@ -71,7 +76,7 @@ impl<T: Clone + Send> Contains<T> for Labeled<T, LabelNonIdem> {
 
 #[async_trait]
 impl<T: Clone + Send, const TIME: u64> Contains<T> for Labeled<T, LabelTimely<TIME>> {
-    type CreationArgs = Box<dyn Fn() -> BoxFuture<'static, T> + Send>;
+    type CreationArgs = TimelyClosure<T>;
 
     fn new(create_fn: Self::CreationArgs) -> Self {
         Self {
@@ -83,10 +88,8 @@ impl<T: Clone + Send, const TIME: u64> Contains<T> for Labeled<T, LabelTimely<TI
     async unsafe fn unwrap_unchecked(&mut self) -> T {
         let now = Instant::now();
         let (expiry, ref create_fn) = self.metadata;
-        if now < expiry {
-            self.val
-                .clone()
-                .expect("Timely value was non-expired, so should always have a value")
+        if now < expiry && self.val.is_some() {
+            self.val.clone().unwrap()
         } else {
             let val = create_fn().await;
             self.val = Some(val.clone());
@@ -114,7 +117,7 @@ where
         unsafe { self.unwrap_unchecked() }.await
     }
 
-    pub async fn endorse_idempotent(&mut self) -> T {
+    pub async fn endorse_idempotent(mut self) -> T {
         self.unwrap_checked::<LabelNonIdem>().await
     }
 }
