@@ -1,13 +1,18 @@
-use crate::karma::{Peripheral, PeripheralMsg};
+use crate::karma::{InputOrOutput, Karma, Peripheral, PeripheralMsg};
 
 use crossbeam::channel::{Receiver, Sender, select, unbounded};
 use rand::{Rng, SeedableRng, rngs::SmallRng};
 use std::{
-    sync::{Arc, Mutex}, task::Waker, thread, time::Duration
+    collections::VecDeque,
+    pin::Pin,
+    sync::{Arc, Mutex},
+    task::{Context, Poll, Waker},
+    thread::{self, JoinHandle},
+    time::Duration,
 };
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum RadioState {
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+pub enum RadioState {
     NotInit,
     Receive,
     Transmit,
@@ -15,7 +20,7 @@ enum RadioState {
 }
 
 #[derive(Clone, Debug)]
-enum RadioInputMsg {
+pub enum RadioInputMsg {
     Init,
     StateTransmit,
     StateReceive,
@@ -23,8 +28,9 @@ enum RadioInputMsg {
 }
 
 #[derive(Clone, Debug)]
-enum RadioOutputMsg {
+pub enum RadioOutputMsg {
     DataReceived(Vec<u8>),
+    InitDone,
     SendDone,
 }
 
@@ -53,6 +59,7 @@ impl PeripheralMsg<RadioState> for RadioOutputMsg {
         match self {
             RadioOutputMsg::SendDone => RadioState::SendInProgress,
             RadioOutputMsg::DataReceived(_) => RadioState::Receive,
+            RadioOutputMsg::InitDone => RadioState::NotInit,
         }
     }
 
@@ -60,17 +67,22 @@ impl PeripheralMsg<RadioState> for RadioOutputMsg {
         match self {
             RadioOutputMsg::SendDone => RadioState::Transmit,
             RadioOutputMsg::DataReceived(_) => RadioState::Receive,
+            RadioOutputMsg::InitDone => RadioState::Receive,
         }
     }
 }
 
+#[derive(Clone)]
 pub struct Radio {
     id: u64,
 
     // Shared memory region w/ radio "hardware"
     current_state: Arc<Mutex<RadioState>>,
     // "Interrupt" sender
-    waker: Arc<Mutex<Option<Waker>>>,
+    wakers: Arc<Mutex<Vec<Waker>>>,
+
+    // Used for power cycles
+    power_cycle_sender: Sender<()>,
 
     // Queue for sending commands from CPU to radio
     command_sender: Sender<RadioInputMsg>,
@@ -90,10 +102,81 @@ impl Peripheral<RadioState> for Radio {
         *self.current_state.lock().unwrap()
     }
 
-    fn send_msg(&mut self, msg: Self::InputMsg) {
-        *self.waker.lock().unwrap() = None;
+    fn power_cycle(&mut self) {
+        // Send a power cycle signal to the hw
+        self.power_cycle_sender.send(()).unwrap();
+    }
+}
 
-        self.command_sender.send(msg).unwrap();
+pub struct RadioFuture {
+    wakers: Arc<Mutex<Vec<Waker>>>,
+    receiver: Receiver<RadioOutputMsg>,
+    support_queue: Arc<Mutex<VecDeque<InputOrOutput<RadioInputMsg, RadioOutputMsg>>>>,
+
+    orig_input: RadioInputMsg,
+}
+
+impl Future for RadioFuture {
+    type Output = Option<RadioOutputMsg>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        match self.orig_input {
+            RadioInputMsg::StateTransmit | RadioInputMsg::StateReceive => return Poll::Ready(None),
+            _ => (),
+        }
+
+        // Try to receive the message
+        while let Ok(msg) = self.receiver.try_recv() {
+            // If we see a message that matches what we're waiting for,
+            // return Ready
+            match (&self.orig_input, &msg) {
+                (RadioInputMsg::Init, RadioOutputMsg::InitDone)
+                | (RadioInputMsg::Send(_), RadioOutputMsg::SendDone) => {
+                    self.support_queue
+                        .lock()
+                        .unwrap()
+                        .push_back(InputOrOutput::Output(msg.clone()));
+                    println!(
+                        "Current support queue: {:?}",
+                        *self.support_queue.lock().unwrap()
+                    );
+                    return Poll::Ready(Some(msg));
+                }
+                _ => (),
+            }
+        }
+
+        // If we didn't see anything right now, set waker and remain pending
+        let mut wakers = self.wakers.lock().unwrap();
+        wakers.push(cx.waker().clone());
+        Poll::Pending
+    }
+}
+
+impl RadioFuture {
+    pub fn new(karma: &mut Karma<Radio, RadioState>, input: RadioInputMsg) -> Self {
+        let radio = &mut karma.peripheral;
+
+        // Send the message to the radio
+        radio.command_sender.send(input.clone()).unwrap();
+
+        // Update the support queue
+        karma
+            .support_queue
+            .lock()
+            .unwrap()
+            .push_back(InputOrOutput::Input(input.clone()));
+        println!(
+            "Current support queue: {:?}",
+            *karma.support_queue.lock().unwrap()
+        );
+
+        Self {
+            wakers: radio.wakers.clone(),
+            receiver: radio.interrupt_receiver.clone(),
+            orig_input: input,
+            support_queue: karma.support_queue.clone(),
+        }
     }
 }
 
@@ -107,14 +190,21 @@ impl Radio {
 
         let (data_gen_sender, data_gen_receiver) = unbounded();
 
+        let (power_cycle_sender, power_cycle_receiver) = unbounded();
+
+        let wakers = Arc::new(Mutex::new(vec![]));
+
         // Spawn the radio backend thread
         let hw_state = state.clone();
+        let hw_wakers = wakers.clone();
         thread::spawn(|| {
             radio_backend(
                 hw_state,
+                hw_wakers,
                 command_receiver,
                 interrupt_sender,
                 data_gen_receiver,
+                power_cycle_receiver,
             );
         });
 
@@ -123,14 +213,13 @@ impl Radio {
             radio_data_generator(data_gen_sender);
         });
 
-        let waker = Arc::new(Mutex::new(None));
-
         Radio {
             id,
             current_state: state,
             command_sender,
             interrupt_receiver,
-            waker,
+            wakers,
+            power_cycle_sender,
         }
     }
 }
@@ -138,14 +227,24 @@ impl Radio {
 // The radio "hardware" logic
 fn radio_backend(
     state: Arc<Mutex<RadioState>>,
+    wakers: Arc<Mutex<Vec<Waker>>>,
     command_receiver: Receiver<RadioInputMsg>,
     interrupt_sender: Sender<RadioOutputMsg>,
     data_gen_receiver: Receiver<Vec<u8>>,
+    power_cycle_receiver: Receiver<()>,
 ) {
     loop {
         let prev_state = *state.lock().unwrap();
 
         select! {
+            // Power cycle signal: kill this "hardware" (thread)
+            recv(power_cycle_receiver) -> data => {
+                data.unwrap();
+
+                println!("Radio received power-cycle signal; resetting");
+
+                *state.lock().unwrap() = RadioState::NotInit;
+            }
             // Receive some data over the radio
             recv(data_gen_receiver) -> data => {
                 let data = data.unwrap();
@@ -156,6 +255,12 @@ fn radio_backend(
                     RadioState::Receive => {
                         println!(" -> forwarding to CPU...");
                         interrupt_sender.send(RadioOutputMsg::DataReceived(data)).unwrap();
+
+                        // TODO: remove wakers afterwards
+                        let wakers = wakers.lock().unwrap();
+                        for waker in wakers.iter() {
+                            waker.wake_by_ref();
+                        }
                     },
                     _ => println!(" -> not in RadioState::Receive! ignoring..."),
                 }
@@ -172,6 +277,14 @@ fn radio_backend(
 
                         let mut state = state.lock().unwrap();
                         *state = RadioState::Receive;
+
+                        interrupt_sender.send(RadioOutputMsg::InitDone).unwrap();
+
+                        // TODO: remove wakers afterwards
+                        let wakers = wakers.lock().unwrap();
+                        for waker in wakers.iter() {
+                            waker.wake_by_ref();
+                        }
                     },
                     RadioInputMsg::StateTransmit => {
                         assert!(prev_state == RadioState::Receive);
@@ -189,16 +302,28 @@ fn radio_backend(
                         assert!(prev_state == RadioState::Transmit);
 
                         // Enter SendInProgress state
-                        let mut statep = state.lock().unwrap();
-                        *statep = RadioState::SendInProgress;
+                        {
+                            let mut state = state.lock().unwrap();
+                            *state = RadioState::SendInProgress;
+                        }
 
                         // Simulated rate of 1 byte / 0.5 sec
                         let time = Duration::from_millis(data.len() as u64 * 500);
                         thread::sleep(time);
 
                         // Return to Transmit state
-                        let mut statep = state.lock().unwrap();
-                        *statep = RadioState::Transmit;
+                        {
+                            let mut state = state.lock().unwrap();
+                            *state = RadioState::Transmit;
+                        }
+
+                        // Send SendDone message
+                        interrupt_sender.send(RadioOutputMsg::SendDone).unwrap();
+                        // TODO: remove wakers afterwards
+                        let wakers = wakers.lock().unwrap();
+                        for waker in wakers.iter() {
+                            waker.wake_by_ref();
+                        }
                     },
                 }
             }
