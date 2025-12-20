@@ -8,7 +8,7 @@ use std::{
 use futures::FutureExt;
 use some_macros::labeled_block;
 
-use secrets_structs::{LabelNonIdem, LabelTimely, Labeled, TimelyClosure};
+use secrets_structs::{LabelNonIdem, LabelTimely, Labeled};
 use toy_async::{executor::spawn_executor_thread, timer::TimerFuture};
 
 async fn foo() {
