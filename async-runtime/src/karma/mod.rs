@@ -8,9 +8,6 @@ use std::{
 };
 
 pub trait PeripheralMsg<S> {
-    // TODO: should these return Option, with None
-    // indicating that the message does not indicate a state
-    // change?
     fn required_initial_state(&self) -> S;
     fn resulting_state(&self) -> S;
 }

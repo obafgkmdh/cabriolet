@@ -37,7 +37,33 @@ async fn foo() {
         }
     });
 
-    let y = x.endorse_idempotent().await;
+    let karma2 = Karma::new(Radio::new(2));
+    let y = labeled_block!(LabelTimely<1000> |x, karma2| {
+        println!("BEGINNING 2");
+
+        let f = RadioFuture::new(&mut karma2, RadioFutureCreateArg::InputMsg(RadioInputMsg::Init));
+        let out = f.await.unwrap();
+        println!("out2: {:?}", out);
+
+        let f = RadioFuture::new(&mut karma2, RadioFutureCreateArg::AwaitReceive);
+        let out = f.await.unwrap();
+        println!("out2: {:?}", out);
+
+        let data = unwrap_labeled(x);
+
+        // result is x + radio_response_y
+        let data2 = match out {
+            async_runtime::karma::radio::RadioOutputMsg::DataReceived(data) => data,
+            _ => panic!("Received wrong output message type"),
+        };
+
+        let result: Vec<_> = data.into_iter().zip(data2.into_iter()).collect();
+
+        result
+    });
+
+    let z = y.endorse_idempotent().await;
+    println!("result: {:?}", z);
 }
 
 fn main() {
