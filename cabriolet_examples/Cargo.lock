@@ -3,6 +3,14 @@
 version = 4
 
 [[package]]
+name = "async-runtime"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "rand",
+]
+
+[[package]]
 name = "async-trait"
 version = "0.1.89"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -17,10 +25,10 @@ dependencies = [
 name = "cabriolet_examples"
 version = "0.1.0"
 dependencies = [
+ "async-runtime",
  "futures",
  "secrets_structs",
  "some_macros",
- "toy-async",
 ]
 
 [[package]]
@@ -248,14 +256,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
-]
-
-[[package]]
-name = "toy-async"
-version = "0.1.0"
-dependencies = [
- "futures",
- "rand",
 ]
 
 [[package]]

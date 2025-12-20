@@ -6,5 +6,5 @@ edition = "2024"
 [dependencies]
 some_macros = { path = "../cabriolet_library/some_macros" }
 secrets_structs = { path = "../cabriolet_library/secrets_structs" }
-toy-async = { path = "../toy-async" }
+async-runtime = { path = "../async-runtime" }
 futures = "0.3.31"

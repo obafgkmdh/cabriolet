@@ -9,7 +9,7 @@ use futures::FutureExt;
 use some_macros::labeled_block;
 
 use secrets_structs::{LabelNonIdem, LabelTimely, Labeled};
-use toy_async::{executor::spawn_executor_thread, timer::TimerFuture};
+use async_runtime::{executor::spawn_executor_thread, timer::TimerFuture};
 
 async fn foo() {
     let x = 1;

@@ -1,8 +1,8 @@
 use std::{thread::sleep, time::Duration};
 
-use toy_async::executor::spawn_executor_thread;
-use toy_async::temperature_sensor::{TemperatureSensor, TemperatureSensorFuture};
-use toy_async::timer::TimerFuture;
+use async_runtime::executor::spawn_executor_thread;
+use async_runtime::temperature_sensor::{TemperatureSensor, TemperatureSensorFuture};
+use async_runtime::timer::TimerFuture;
 
 fn main() {
     // start the runtime thread
