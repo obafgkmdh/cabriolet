@@ -74,6 +74,10 @@ impl<T: Clone + Send> Contains<T> for Labeled<T, LabelNonIdem> {
     }
 }
 
+pub fn checkpoint() {
+    std::hint::black_box(0);
+}
+
 #[async_trait]
 impl<T: Clone + Send, const TIME: u64> Contains<T> for Labeled<T, LabelTimely<TIME>> {
     type CreationArgs = TimelyClosure<T>;

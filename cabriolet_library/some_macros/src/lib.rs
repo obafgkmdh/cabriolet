@@ -184,6 +184,7 @@ pub fn labeled_block(item: TokenStream) -> TokenStream {
             {
                 #clones_tokens
                 let tmp: ::secrets_structs::Labeled<_, #ty> = ::secrets_structs::Labeled::new({
+                    ::secrets_structs::checkpoint();
                     #stream
                 });
                 tmp
@@ -203,6 +204,7 @@ pub fn labeled_block(item: TokenStream) -> TokenStream {
                 let nc: ::secrets_structs::TimelyClosure<_> = Arc::new(move || {
                     #clones_tokens
                     async move {
+                        ::secrets_structs::checkpoint();
                         #stream
                     }.boxed()
                 });
