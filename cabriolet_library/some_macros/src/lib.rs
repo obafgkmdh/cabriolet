@@ -66,11 +66,6 @@ fn expand_expr(input: &Expr, label_type: &Type) -> TokenStream {
                     ::secrets_structs::Labeled::unwrap_checked::<#label_type>(&mut #args).await
                 }
                 .into()
-            } else if is_call_to(call_expr, "wrap_labeled") {
-                quote::quote! {
-                    ::secrets_structs::Labeled::<_, #label_type>::new(#args)
-                }
-                .into()
             } else {
                 quote::quote! {
                     #func(#args)

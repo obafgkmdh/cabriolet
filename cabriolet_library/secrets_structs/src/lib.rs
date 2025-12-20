@@ -93,6 +93,7 @@ impl<T: Clone + Send, const TIME: u64> Contains<T> for Labeled<T, LabelTimely<TI
         } else {
             let val = create_fn().await;
             self.val = Some(val.clone());
+            self.metadata.0 = Instant::now() + Duration::from_millis(TIME);
 
             val
         }
