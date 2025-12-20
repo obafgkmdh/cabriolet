@@ -188,9 +188,9 @@ pub fn labeled_block(item: TokenStream) -> TokenStream {
         quote!(
             {
                 #clones_tokens
-                let tmp: Labeled<_, #ty> = {
+                let tmp: ::secrets_structs::Labeled<_, #ty> = ::secrets_structs::Labeled::new({
                     #stream
-                };
+                });
                 tmp
             }
         )
@@ -211,7 +211,7 @@ pub fn labeled_block(item: TokenStream) -> TokenStream {
                         #stream
                     }.boxed()
                 });
-                let tmp: Labeled<_, #ty> = Labeled::new(nc);
+                let tmp: ::secrets_structs::Labeled<_, #ty> = ::secrets_structs::Labeled::new(nc);
                 tmp
             }
         )

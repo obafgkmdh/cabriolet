@@ -48,7 +48,7 @@ async fn foo() {
 
         let sigma = x + unwrap_labeled(y);
 
-        wrap_labeled(sigma)
+        sigma
     });
 
     println!("result: {:?}", w.endorse_idempotent().await);
