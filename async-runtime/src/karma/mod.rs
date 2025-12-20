@@ -26,8 +26,8 @@ pub trait Peripheral<S> {
     fn power_cycle(&mut self);
 }
 
-#[derive(Debug)]
-enum InputOrOutput<I, O> {
+#[derive(Clone, Debug)]
+pub enum InputOrOutput<I, O> {
     Input(I),
     Output(O),
 }

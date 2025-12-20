@@ -7,7 +7,7 @@ use std::{
     pin::Pin,
     sync::{Arc, Mutex},
     task::{Context, Poll, Waker},
-    thread::{self, JoinHandle},
+    thread,
     time::Duration,
 };
 
@@ -113,15 +113,17 @@ pub struct RadioFuture {
     receiver: Receiver<RadioOutputMsg>,
     support_queue: Arc<Mutex<VecDeque<InputOrOutput<RadioInputMsg, RadioOutputMsg>>>>,
 
-    orig_input: RadioInputMsg,
+    orig_arg: RadioFutureCreateArg,
 }
 
 impl Future for RadioFuture {
     type Output = Option<RadioOutputMsg>;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        match self.orig_input {
-            RadioInputMsg::StateTransmit | RadioInputMsg::StateReceive => return Poll::Ready(None),
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        match self.orig_arg {
+            RadioFutureCreateArg::InputMsg(
+                RadioInputMsg::StateTransmit | RadioInputMsg::StateReceive,
+            ) => return Poll::Ready(None),
             _ => (),
         }
 
@@ -129,17 +131,14 @@ impl Future for RadioFuture {
         while let Ok(msg) = self.receiver.try_recv() {
             // If we see a message that matches what we're waiting for,
             // return Ready
-            match (&self.orig_input, &msg) {
-                (RadioInputMsg::Init, RadioOutputMsg::InitDone)
-                | (RadioInputMsg::Send(_), RadioOutputMsg::SendDone) => {
-                    self.support_queue
-                        .lock()
-                        .unwrap()
-                        .push_back(InputOrOutput::Output(msg.clone()));
-                    println!(
-                        "Current support queue: {:?}",
-                        *self.support_queue.lock().unwrap()
-                    );
+            match (&self.orig_arg, &msg) {
+                (RadioFutureCreateArg::InputMsg(RadioInputMsg::Init), RadioOutputMsg::InitDone)
+                | (
+                    RadioFutureCreateArg::InputMsg(RadioInputMsg::Send(_)),
+                    RadioOutputMsg::SendDone,
+                )
+                | (RadioFutureCreateArg::AwaitReceive, RadioOutputMsg::DataReceived(_)) => {
+                    self.push_to_support_queue(InputOrOutput::Output(msg.clone()));
                     return Poll::Ready(Some(msg));
                 }
                 _ => (),
@@ -153,30 +152,60 @@ impl Future for RadioFuture {
     }
 }
 
+#[derive(Clone)]
+pub enum RadioFutureCreateArg {
+    InputMsg(RadioInputMsg),
+    AwaitReceive,
+}
+
 impl RadioFuture {
-    pub fn new(karma: &mut Karma<Radio, RadioState>, input: RadioInputMsg) -> Self {
-        let radio = &mut karma.peripheral;
+    pub fn push_to_support_queue(&mut self, event: InputOrOutput<RadioInputMsg, RadioOutputMsg>) {
+        // Ignore any inputs or outputs that don't affect the state machine
+        let has_sm_effect = match &event {
+            InputOrOutput::Input(input)
+                if input.required_initial_state() == input.resulting_state() =>
+            {
+                false
+            }
+            InputOrOutput::Output(output)
+                if output.required_initial_state() == output.resulting_state() =>
+            {
+                false
+            }
+            _ => true,
+        };
+        if has_sm_effect {
+            self.support_queue.lock().unwrap().push_back(event);
+        }
 
-        // Send the message to the radio
-        radio.command_sender.send(input.clone()).unwrap();
-
-        // Update the support queue
-        karma
-            .support_queue
-            .lock()
-            .unwrap()
-            .push_back(InputOrOutput::Input(input.clone()));
         println!(
             "Current support queue: {:?}",
-            *karma.support_queue.lock().unwrap()
+            *self.support_queue.lock().unwrap()
         );
+    }
 
-        Self {
+    pub fn new(karma: &mut Karma<Radio, RadioState>, arg: RadioFutureCreateArg) -> Self {
+        let radio = &mut karma.peripheral;
+
+        let mut ret = Self {
             wakers: radio.wakers.clone(),
             receiver: radio.interrupt_receiver.clone(),
-            orig_input: input,
+            orig_arg: arg.clone(),
             support_queue: karma.support_queue.clone(),
+        };
+
+        match arg {
+            RadioFutureCreateArg::InputMsg(input) => {
+                // Send the message to the radio
+                radio.command_sender.send(input.clone()).unwrap();
+
+                // Update the support queue
+                ret.push_to_support_queue(InputOrOutput::Input(input));
+            }
+            RadioFutureCreateArg::AwaitReceive => (),
         }
+
+        ret
     }
 }
 
@@ -239,7 +268,10 @@ fn radio_backend(
         select! {
             // Power cycle signal: kill this "hardware" (thread)
             recv(power_cycle_receiver) -> data => {
-                data.unwrap();
+                if data.is_err() {
+                    println!("Received power cycle receiver error");
+                    return;
+                }
 
                 println!("Radio received power-cycle signal; resetting");
 
@@ -247,7 +279,10 @@ fn radio_backend(
             }
             // Receive some data over the radio
             recv(data_gen_receiver) -> data => {
-                let data = data.unwrap();
+                let Ok(data) = data else {
+                    println!("Received data gen receiver error");
+                    return;
+                };
 
                 println!("Radio hardware received data: {:?}", data);
 
@@ -267,7 +302,10 @@ fn radio_backend(
             }
             // Receive a command from the CPU
             recv(command_receiver) -> msg => {
-                let msg = msg.unwrap();
+                let Ok(msg) = msg else {
+                    println!("Received command receiver error");
+                    return;
+                };
 
                 println!("Radio hardware received message: {:?}", msg);
 
