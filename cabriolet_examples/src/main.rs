@@ -15,44 +15,43 @@ async fn foo() {
     let x = 1;
 
     let before = Instant::now();
-    let m: TimelyClosure<_> = Arc::new(move || {
-        async move {
-            let timer_future = TimerFuture::new(Duration::from_millis(1500));
-            timer_future.await;
+    let y = labeled_block!(LabelTimely<10000> || {
+        let timer_future = TimerFuture::new(Duration::from_millis(3000));
+        timer_future.await;
 
-            let now = Instant::now();
-            let elapsed = now - before;
+        let now = Instant::now();
+        let elapsed = now - before;
 
-            elapsed.as_millis() as i32
-        }
-        .boxed()
+        elapsed.as_millis() as i32
     });
 
-    let y: Labeled<i32, LabelTimely<10>> = Labeled::new(m);
+    let n: Labeled<i32, LabelTimely<100>> = labeled_block!(LabelTimely<100> |y| {
+        let yp = y.endorse_idempotent().await;
 
-    let nc: TimelyClosure<_> = Arc::new(move || {
-        let yclone: Labeled<i32, LabelTimely<10>> = y.clone();
-
-        async move {
-            let yp = yclone.endorse_idempotent().await;
-
-            yp + 67
-        }
-        .boxed()
+        yp + 67
     });
-    let n: Labeled<i32, LabelTimely<10>> = Labeled::new(nc);
 
     println!("n: {:?}", n.endorse_idempotent().await);
 
-    //let mut z = labeled_block!(LabelNonIdem {
-    //    std::thread::sleep(std::time::Duration::from_millis(1500));
+    let z = labeled_block!(LabelTimely<100> |y| {
+        std::thread::sleep(std::time::Duration::from_millis(1000));
 
-    //    let sigma = x + unwrap_labeled(y);
+        let sigma = x + unwrap_labeled(y);
 
-    //    wrap_labeled(sigma)
-    //});
+        sigma
+    });
 
-    //println!("result: {:?}", z.endorse_idempotent().await);
+    println!("result: {:?}", z.endorse_idempotent().await);
+
+    let w = labeled_block!(LabelNonIdem |y| {
+        std::thread::sleep(std::time::Duration::from_millis(1000));
+
+        let sigma = x + unwrap_labeled(y);
+
+        wrap_labeled(sigma)
+    });
+
+    println!("result: {:?}", w.endorse_idempotent().await);
 }
 
 fn main() {

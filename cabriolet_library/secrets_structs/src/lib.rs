@@ -32,7 +32,7 @@ impl Label for LabelNonIdem {
 
 impl<L: Label> AtMostAsIdemAs<L> for LabelNonIdem {}
 impl<const T1: u64, const T2: u64> AtMostAsIdemAs<LabelTimely<T2>> for LabelTimely<T1> where
-    [(); T1 as usize - T2 as usize]: Sized
+    [(); T2 as usize - T1 as usize]: Sized
 {
 }
 

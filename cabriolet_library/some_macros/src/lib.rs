@@ -39,6 +39,17 @@ fn is_call_to(call: &syn::ExprCall, path: &str) -> bool {
     }
 }
 
+// Returns whether the Type is a specific type
+fn is_type(the_type: &syn::Type, path: &str) -> bool {
+    if let syn::Type::Path(path_expr) = &*the_type {
+        let mut path_str = quote::quote! {#path_expr}.to_string();
+        path_str.retain(|c| !c.is_whitespace());
+        return path_str == path;
+    } else {
+        false
+    }
+}
+
 fn expand_expr(input: &Expr, label_type: &Type) -> TokenStream {
     match input {
         Expr::Call(call_expr) => {
@@ -129,28 +140,81 @@ fn expand_block(input: &syn::Block, label_type: &Type) -> TokenStream {
 impl Parse for LabeledBlock {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let ty: Type = input.parse().unwrap_or_else(|_| panic!("not a type"));
+        let mut inputs = syn::punctuated::Punctuated::new();
+        let _or1_token: syn::Token![|] = input.parse().unwrap();
+        loop {
+            if input.peek(syn::Token![|]) {
+                break;
+            }
+            let ele: syn::Ident = input.parse()?;
+            inputs.push_value(ele);
+            if input.peek(syn::Token![|]) {
+                break;
+            }
+            let punct: syn::Token![,] = input.parse()?;
+            inputs.push_punct(punct);
+        }
+        let _or2_token: syn::Token![|] = input.parse().unwrap();
         let blk: Block = input.parse().unwrap();
-        Ok(LabeledBlock { ty, blk })
+        Ok(LabeledBlock {
+            ty,
+            inputs,
+            blk,
+        })
     }
 }
 
 struct LabeledBlock {
     ty: Type,
+    inputs: syn::punctuated::Punctuated<syn::Ident, syn::Token![,]>,
     blk: Block,
 }
 
 #[proc_macro]
 pub fn labeled_block(item: TokenStream) -> TokenStream {
-    let LabeledBlock { ty, blk } = parse_macro_input!(item as LabeledBlock);
+    let LabeledBlock {
+        ty,
+        inputs,
+        blk,
+    } = parse_macro_input!(item as LabeledBlock);
 
     let stream = proc_macro2::TokenStream::from(expand_block(&blk, &ty));
-    quote!(
-        {
-            let tmp: Labeled<_, #ty> = {
-                #stream
-            };
-            tmp
+    if is_type(&ty, "LabelNonIdem") {
+        let mut clones: Vec<_> = Vec::new();
+        for ident in inputs {
+            clones.push(quote!(let mut #ident = #ident.clone();));
         }
-    )
-    .into()
+        let clones_tokens = proc_macro2::TokenStream::from_iter(clones);
+        quote!(
+            {
+                #clones_tokens
+                let tmp: Labeled<_, #ty> = {
+                    #stream
+                };
+                tmp
+            }
+        )
+        .into()
+    } else {
+        // Timely
+        let mut clones: Vec<_> = Vec::new();
+        for ident in inputs {
+            clones.push(quote!(let mut #ident = #ident.clone();));
+        }
+        let clones_tokens = proc_macro2::TokenStream::from_iter(clones);
+        quote!(
+            {
+                #clones_tokens
+                let nc: ::secrets_structs::TimelyClosure<_> = Arc::new(move || {
+                    #clones_tokens
+                    async move {
+                        #stream
+                    }.boxed()
+                });
+                let tmp: Labeled<_, #ty> = Labeled::new(nc);
+                tmp
+            }
+        )
+        .into()
+    }
 }
