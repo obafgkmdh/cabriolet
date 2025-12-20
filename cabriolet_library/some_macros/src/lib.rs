@@ -3,7 +3,7 @@ use proc_macro::TokenStream;
 use quote::{ToTokens, quote};
 use syn;
 use syn::parse::{Parse, ParseStream};
-use syn::{Block, Expr, Stmt, Type, parse_macro_input};
+use syn::{Block, Expr, Ident, Stmt, Token, Type, parse_macro_input, punctuated::Punctuated};
 // use syn::parse::{Parse, ParseStream};
 
 #[proc_macro]
@@ -30,7 +30,7 @@ fn comma_separate<T: Iterator<Item = proc_macro2::TokenStream>>(ts: T) -> proc_m
 
 // Returns whether the function call is a specific function.
 fn is_call_to(call: &syn::ExprCall, path: &str) -> bool {
-    if let syn::Expr::Path(path_expr) = &*call.func {
+    if let Expr::Path(path_expr) = &*call.func {
         let mut path_str = quote::quote! {#path_expr}.to_string();
         path_str.retain(|c| !c.is_whitespace());
         return path_str == path;
@@ -40,8 +40,8 @@ fn is_call_to(call: &syn::ExprCall, path: &str) -> bool {
 }
 
 // Returns whether the Type is a specific type
-fn is_type(the_type: &syn::Type, path: &str) -> bool {
-    if let syn::Type::Path(path_expr) = &*the_type {
+fn is_type(the_type: &Type, path: &str) -> bool {
+    if let Type::Path(path_expr) = &*the_type {
         let mut path_str = quote::quote! {#path_expr}.to_string();
         path_str.retain(|c| !c.is_whitespace());
         return path_str == path;
@@ -55,9 +55,7 @@ fn expand_expr(input: &Expr, label_type: &Type) -> TokenStream {
         Expr::Call(call_expr) => {
             let func = &call_expr.func;
             let args = comma_separate(call_expr.args.iter().map(
-                |arg: &syn::Expr| -> proc_macro2::TokenStream {
-                    expand_expr(arg, label_type).into()
-                },
+                |arg: &Expr| -> proc_macro2::TokenStream { expand_expr(arg, label_type).into() },
             ));
 
             // If it's a call to an unwrap_labeled "function"
@@ -88,7 +86,7 @@ fn expand_expr(input: &Expr, label_type: &Type) -> TokenStream {
     }
 }
 
-fn expand_block(input: &syn::Block, label_type: &Type) -> TokenStream {
+fn expand_block(input: &Block, label_type: &Type) -> TokenStream {
     let token_streams: proc_macro2::TokenStream = input
         .stmts
         .iter()
@@ -135,43 +133,35 @@ fn expand_block(input: &syn::Block, label_type: &Type) -> TokenStream {
 impl Parse for LabeledBlock {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let ty: Type = input.parse().unwrap_or_else(|_| panic!("not a type"));
-        let mut inputs = syn::punctuated::Punctuated::new();
-        let _or1_token: syn::Token![|] = input.parse().unwrap();
+        let mut inputs = Punctuated::new();
+        let _or1_token: Token![|] = input.parse().unwrap();
         loop {
-            if input.peek(syn::Token![|]) {
+            if input.peek(Token![|]) {
                 break;
             }
-            let ele: syn::Ident = input.parse()?;
+            let ele: Ident = input.parse()?;
             inputs.push_value(ele);
-            if input.peek(syn::Token![|]) {
+            if input.peek(Token![|]) {
                 break;
             }
-            let punct: syn::Token![,] = input.parse()?;
+            let punct: Token![,] = input.parse()?;
             inputs.push_punct(punct);
         }
-        let _or2_token: syn::Token![|] = input.parse().unwrap();
+        let _or2_token: Token![|] = input.parse().unwrap();
         let blk: Block = input.parse().unwrap();
-        Ok(LabeledBlock {
-            ty,
-            inputs,
-            blk,
-        })
+        Ok(LabeledBlock { ty, inputs, blk })
     }
 }
 
 struct LabeledBlock {
     ty: Type,
-    inputs: syn::punctuated::Punctuated<syn::Ident, syn::Token![,]>,
+    inputs: Punctuated<Ident, Token![,]>,
     blk: Block,
 }
 
 #[proc_macro]
 pub fn labeled_block(item: TokenStream) -> TokenStream {
-    let LabeledBlock {
-        ty,
-        inputs,
-        blk,
-    } = parse_macro_input!(item as LabeledBlock);
+    let LabeledBlock { ty, inputs, blk } = parse_macro_input!(item as LabeledBlock);
 
     let stream = proc_macro2::TokenStream::from(expand_block(&blk, &ty));
     if is_type(&ty, "LabelNonIdem") {

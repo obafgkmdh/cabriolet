@@ -1,8 +1,6 @@
 extern crate some_macros;
 
-use std::{
-    sync::Arc,
-};
+use std::sync::Arc;
 
 use futures::FutureExt;
 use some_macros::labeled_block;

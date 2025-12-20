@@ -8,8 +8,8 @@ use std::{
 use futures::FutureExt;
 use some_macros::labeled_block;
 
-use secrets_structs::{LabelNonIdem, LabelTimely, Labeled};
 use async_runtime::{executor::spawn_executor_thread, timer::TimerFuture};
+use secrets_structs::{LabelNonIdem, LabelTimely, Labeled};
 
 async fn foo() {
     let x = 1;
@@ -26,7 +26,7 @@ async fn foo() {
     });
 
     let n: Labeled<i32, LabelTimely<100>> = labeled_block!(LabelTimely<100> |y| {
-        let yp = y.endorse_idempotent().await;
+        let yp = unwrap_labeled(y);
 
         yp + 67
     });
@@ -43,13 +43,15 @@ async fn foo() {
 
     println!("result: {:?}", z.endorse_idempotent().await);
 
-    let w = labeled_block!(LabelNonIdem |y| {
-        std::thread::sleep(std::time::Duration::from_millis(1000));
+    let w = labeled_block!(
+        LabelNonIdem | y | {
+            std::thread::sleep(std::time::Duration::from_millis(1000));
 
-        let sigma = x + unwrap_labeled(y);
+            let sigma = x + unwrap_labeled(y);
 
-        sigma
-    });
+            sigma
+        }
+    );
 
     println!("result: {:?}", w.endorse_idempotent().await);
 }
